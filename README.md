@@ -27,3 +27,5 @@ A Streamlit app to convert chat/text history into Markdown, PDF, Word, and Excel
 - `text_to_document.py`: Main Streamlit app
 - `requirements.txt`: Python dependencies
 - `README.md`: Project info and instructions
+
+Deployed - https://text-to-document.streamlit.app/
