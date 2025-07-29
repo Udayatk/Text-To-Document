@@ -67,64 +67,48 @@ def save_pdf(chat_history):
     try:
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", size=10) # Using a font that supports a wider range of characters
-        
+        pdf.set_font("Arial", size=10)
         if not chat_history:
             pdf.multi_cell(0, 8, "(No content provided)")
             pdf.output(out_path)
             return out_path
-
         header = list(chat_history[0].keys())
-        # Table format
-        col_widths = []
-        effective_page_width = pdf.w - 2 * pdf.l_margin
-        base_col_width = effective_page_width / len(header)
-        
-        for h in header:
-            # Simple dynamic width calculation
-            max_len = max([len(str(row.get(h, ''))) for row in chat_history] + [len(h)])
-            # Proportional width allocation
-            width = max(base_col_width * 0.5, min(base_col_width * 2, max_len * 2.5))
-            col_widths.append(width)
-
-        # Normalize widths to fit page
-        total_width = sum(col_widths)
-        col_widths = [w * effective_page_width / total_width for w in col_widths]
-
-        row_height = pdf.font_size + 4
-        
-        # Header
-        pdf.set_font("Arial", style="B", size=10)
-        for i, h in enumerate(header):
-            pdf.cell(col_widths[i], row_height, h, border=1, align='C')
-        pdf.ln(row_height)
-        
-        # Rows
-        pdf.set_font("Arial", size=10)
-        for entry in chat_history:
-            # Determine max height needed for the current row
-            y_before_row = pdf.get_y()
-            max_h = row_height
+        # If single-column, show each message as a paragraph (no header)
+        if len(header) == 1:
+            pdf.set_font("Arial", size=10)
+            for entry in chat_history:
+                msg = str(entry[header[0]]).strip()
+                if msg:
+                    pdf.multi_cell(0, 8, msg)
+                    pdf.ln(2)
+        else:
+            col_widths = []
+            effective_page_width = pdf.w - 2 * pdf.l_margin
+            base_col_width = effective_page_width / len(header)
+            for h in header:
+                max_len = max([len(str(row.get(h, ''))) for row in chat_history] + [len(h)])
+                width = max(base_col_width * 0.5, min(base_col_width * 2, max_len * 2.5))
+                col_widths.append(width)
+            total_width = sum(col_widths)
+            col_widths = [w * effective_page_width / total_width for w in col_widths]
+            row_height = pdf.font_size + 4
+            # Header
+            pdf.set_font("Arial", style="B", size=10)
             for i, h in enumerate(header):
-                text = str(entry.get(h, ''))
-                # Create a temporary multicell to see how high it would be
-                pdf.multi_cell(col_widths[i], row_height, text, border=0, align='L', dry_run=True, output='H')
-                # This doesn't work as expected with fpdf, so we stick to a simpler method
-            
-            # Reset X to draw the cells
-            pdf.set_x(pdf.l_margin)
-            for i, h in enumerate(header):
-                x, y = pdf.get_x(), pdf.get_y()
-                pdf.multi_cell(col_widths[i], row_height, str(entry.get(h, '')), border=1, align='L')
-                pdf.set_xy(x + col_widths[i], y)
-            pdf.ln(row_height) # simplified line break
-
+                pdf.cell(col_widths[i], row_height, h, border=1, align='C')
+            pdf.ln(row_height)
+            # Rows
+            pdf.set_font("Arial", size=10)
+            for entry in chat_history:
+                pdf.set_x(pdf.l_margin)
+                for i, h in enumerate(header):
+                    pdf.cell(col_widths[i], row_height, str(entry.get(h, '')), border=1, align='L')
+                pdf.ln(row_height)
         pdf.output(out_path)
         return out_path
     except Exception as e:
-        # Provide a more specific error for font issues
         if "Unsupported font" in str(e) or "character" in str(e):
-             raise RuntimeError(f"PDF generation failed due to a font/character issue. Ensure you use a font that supports all characters in your text. Error: {e}")
+            raise RuntimeError(f"PDF generation failed due to a font/character issue. Ensure you use a font that supports all characters in your text. Error: {e}")
         raise RuntimeError(f"PDF generation failed: {str(e)}")
 
 
@@ -133,14 +117,46 @@ def save_word(chat_history):
     out_path = get_output_path(filename)
     doc = Document()
 
-    # Handle if the input is a markdown string within a 'message' field
-    if isinstance(chat_history, list) and len(chat_history) == 1 and 'message' in chat_history[0]:
-        md_table_string = chat_history[0]['message']
-        chat_history = parse_markdown_table(md_table_string)
-        if not chat_history:
-            doc.add_paragraph("Could not parse the markdown table provided.")
-            doc.save(out_path)
-            return out_path
+    # Always treat chat_history as a list of dicts. If only 'message' keys, make a single-column table.
+    if isinstance(chat_history, list) and len(chat_history) > 0:
+        # If all rows have only 'message' key, treat as single-column
+        if all(list(row.keys()) == ['message'] for row in chat_history):
+            header = ['Message']
+            table = doc.add_table(rows=1, cols=1)
+            table.style = 'Table Grid'
+            hdr_cell = table.rows[0].cells[0]
+            run = hdr_cell.paragraphs[0].add_run('Message')
+            run.bold = True
+            hdr_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+            for entry in chat_history:
+                row_cell = table.add_row().cells[0]
+                row_cell.text = str(entry['message']).strip()
+                row_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+        else:
+            header = list(chat_history[0].keys())
+            table = doc.add_table(rows=1, cols=len(header))
+            table.style = 'Table Grid'
+            column_widths_map = {
+                "First Name": Pt(100),
+                "Last Name": Pt(100),
+                "Age": Pt(50)
+            }
+            for i, col_name in enumerate(header):
+                col = table.columns[i]
+                col.width = column_widths_map.get(col_name, Pt(90)) # Default width
+            hdr_cells = table.rows[0].cells
+            for i, h in enumerate(header):
+                run = hdr_cells[i].paragraphs[0].add_run(h.strip())
+                run.bold = True
+                hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+            for entry in chat_history:
+                row_cells = table.add_row().cells
+                for i, k in enumerate(header):
+                    cell = row_cells[i]
+                    cell.text = str(entry.get(k, '')).strip()
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+    else:
+        doc.add_paragraph("No chat history provided.")
 
     # Add title
     title = doc.add_paragraph()

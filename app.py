@@ -46,26 +46,37 @@ def chat():
     if not data or 'message' not in data:
         return jsonify({'error': 'Missing "message" in request body'}), 400
     user_message = data['message']
-    chat_history.append({'user': user_message})
+    chat_history.append({'message': user_message})
     return jsonify({'reply': ''})
 
 @app.route('/export', methods=['GET'])
 def export():
     if not chat_history or not isinstance(chat_history, list) or not all(isinstance(row, dict) for row in chat_history):
-        return jsonify({'error': 'No chat history to export or invalid format.'}), 400
+        error_detail = {
+            'chat_history_type': str(type(chat_history)),
+            'chat_history_length': len(chat_history) if isinstance(chat_history, list) else 'N/A',
+            'chat_history_sample': chat_history[:2] if isinstance(chat_history, list) else str(chat_history)
+        }
+        return jsonify({'error': 'No chat history to export or invalid format.', 'detail': error_detail}), 400
     doc_type = request.args.get('type', 'md')
+    # Normalize chat_history for single-column export
+    normalized_history = chat_history
+    if isinstance(chat_history, list) and len(chat_history) > 0:
+        # If all rows have only 'user' key, convert to 'message' for compatibility
+        if all(list(row.keys()) == ['user'] for row in chat_history):
+            normalized_history = [{'message': row['user']} for row in chat_history]
     try:
         if doc_type == 'pdf':
-            doc_path = save_pdf(chat_history)
+            doc_path = save_pdf(normalized_history)
             mime = 'application/pdf'
         elif doc_type == 'word':
-            doc_path = save_word(chat_history)
+            doc_path = save_word(normalized_history)
             mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         elif doc_type == 'excel':
-            doc_path = save_excel(chat_history)
+            doc_path = save_excel(normalized_history)
             mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         else:
-            doc_path = save_markdown(chat_history)
+            doc_path = save_markdown(normalized_history)
             mime = 'text/markdown'
         return send_file(doc_path, as_attachment=True, mimetype=mime)
     except Exception as e:
